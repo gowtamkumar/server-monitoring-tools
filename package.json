@@ -1,0 +1,27 @@
+{
+  "name": "vps-monitor",
+  "version": "1.0.0",
+  "description": "Comprehensive VPS server monitoring tool with CLI and API server",
+  "main": "index.js",
+  "scripts": {
+    "cli": "node index.js",
+    "cli:watch": "node index.js --watch",
+    "cli:json": "node index.js --json",
+    "server": "node server.js",
+    "prod": "NODE_ENV=production node server.js",
+    "dev": "nodemon server.js",
+    "start": "node server.js"
+  },
+  "keywords": ["vps", "monitoring", "server", "docker", "devops"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.2.3",
+    "node-ssh": "^13.2.1",
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  }
+}

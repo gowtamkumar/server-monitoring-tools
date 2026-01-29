@@ -1,0 +1,26 @@
+[Unit]
+Description=VPS Monitoring Service
+Documentation=https://github.com/yourusername/vps-monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/vps-monitor
+Environment=NODE_ENV=production
+Environment=MODE=local
+ExecStart=/usr/bin/node /opt/vps-monitor/server.js
+Restart=always
+RestartSec=10
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=vps-monitor
+
+[Install]
+WantedBy=multi-user.target
