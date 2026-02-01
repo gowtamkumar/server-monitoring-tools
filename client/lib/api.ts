@@ -17,3 +17,22 @@ export async function fetchDockerProcesses(containerName: string) {
   if (!res.ok) throw new Error('Failed to fetch docker processes');
   return res.json();
 }
+
+export async function fetchBackups() {
+  const res = await fetch(`${API_BASE_URL}/backup/list`);
+  if (!res.ok) throw new Error('Failed to fetch backups');
+  return res.json();
+}
+
+export async function runBackup(type: 'client' | 'db', settings: any) {
+  const res = await fetch(`${API_BASE_URL}/backup/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type, settings })
+  });
+  if (!res.ok) {
+    const errorData = await res.json();
+    throw new Error(errorData.error || 'Backup failed');
+  }
+  return res.json();
+}

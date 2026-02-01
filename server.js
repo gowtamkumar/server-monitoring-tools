@@ -3,6 +3,10 @@ const cors = require('cors');
 const { NodeSSH } = require('node-ssh');
 const config = require('./config');
 const monitoring = require('./lib/monitoring');
+const backup = require('./lib/backup');
+const mail = require('./lib/mail');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
@@ -271,8 +275,105 @@ app.get('/api/metrics/docker/:name/top', authenticateApiKey, async (req, res) =>
 });
 
 /**
- * Advanced Web Dashboard
+ * Trigger Backup
  */
+app.post('/api/backup/run', authenticateApiKey, async (req, res) => {
+  const ssh = new NodeSSH();
+  try {
+    const { type, settings } = req.body;
+    let result;
+
+    let sshConnection = null;
+    if (config.mode === 'remote') {
+      await ssh.connect(config.vps);
+      sshConnection = ssh;
+    }
+
+    if (type === 'client') {
+      const source = settings?.path || '.';
+      result = await backup.backupClient(sshConnection, source, settings);
+    } else if (type === 'db') {
+      if (!settings) throw new Error('Database settings required');
+      result = await backup.backupDatabase(sshConnection, settings);
+    } else {
+      throw new Error('Invalid backup type');
+    }
+
+    if (result.success && settings?.email) {
+      let localFilePath = result.file;
+
+      // If remote, download the file to local server first to attach it
+      if (config.mode === 'remote') {
+        localFilePath = path.join('/tmp', `download-${path.basename(result.file)}`);
+        try {
+          await ssh.getFile(localFilePath, result.file);
+        } catch (downloadError) {
+          console.error('Failed to download backup for email:', downloadError);
+          return res.json({ ...result, emailStatus: 'Failed to download file for email' });
+        }
+      }
+
+      // Send the email
+      const mailResult = await mail.sendMail({
+        to: settings.email,
+        subject: `[VPS Backup] ${type === 'db' ? 'Database Dump' : 'Client Archive'} - ${path.basename(result.file)}`,
+        text: `Your backup is complete.\n\nType: ${type.toUpperCase()}\nFile: ${path.basename(result.file)}\nTimestamp: ${result.timestamp}\n\nPlease find the attached file.`,
+        attachments: [
+          {
+            filename: path.basename(result.file),
+            path: localFilePath
+          }
+        ]
+      });
+
+      // Cleanup local downloaded file
+      if (config.mode === 'remote') {
+        fs.unlink(localFilePath, () => { });
+      }
+
+      result.emailStatus = mailResult.success ? 'Sent' : `Failed: ${mailResult.error}`;
+    }
+
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  } finally {
+    ssh.dispose();
+  }
+});
+
+/**
+ * List Backups
+ */
+app.get('/api/backup/list', authenticateApiKey, async (req, res) => {
+  const ssh = new NodeSSH();
+  try {
+    let sshConnection = null;
+    if (config.mode === 'remote') {
+      await ssh.connect(config.vps);
+      sshConnection = ssh;
+    }
+
+    // List files in /tmp matching backup-*
+    const command = 'ls -1 /tmp/backup-* 2>/dev/null';
+    const result = await monitoring.execCommand(sshConnection, command);
+
+    const files = result.stdout.split('\n')
+      .filter(f => f.trim())
+      .map(f => ({
+        name: f.split('/').pop(),
+        path: f,
+        type: f.includes('db') ? 'database' : 'client'
+      }));
+
+    res.json({ success: true, backups: files });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  } finally {
+    ssh.dispose();
+  }
+});
+
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -292,6 +393,11 @@ app.get('/', (req, res) => {
           --danger: #ef4444;
           --text: #f8fafc;
           --text-dim: #94a3b8;
+          
+          /* Boss UI Variables */
+          --boss-gold: #fbbf24;
+          --boss-bg: #111;
+          --boss-panel: #1a1a1a;
         }
 
         * { margin:0; padding:0; box-sizing:border-box; }
@@ -307,6 +413,21 @@ app.get('/', (req, res) => {
         .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; text-transform: uppercase; }
         .badge-success { background: rgba(34, 197, 94, 0.1); color: var(--success); border: 1px solid var(--success); }
         
+        /* Boss UI Styles */
+        .boss-panel { background: var(--boss-panel); border: 1px solid #333; border-top: 3px solid var(--boss-gold); padding: 2rem; border-radius: 0.5rem; margin-bottom: 2rem; }
+        .boss-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 2rem; border-bottom: 1px solid #333; padding-bottom: 1rem; }
+        .boss-title { font-family: 'Playfair Display', serif; color: var(--boss-gold); font-size: 1.5rem; letter-spacing: 1px; text-transform: uppercase; }
+        .boss-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 2rem; }
+        .boss-card { background: #000; border: 1px solid #333; padding: 1.5rem; border-radius: 0.25rem; position: relative; overflow: hidden; }
+        .boss-card::before { content:''; position: absolute; top:0; left:0; width: 100%; height: 2px; background: linear-gradient(90deg, transparent, var(--boss-gold), transparent); }
+        .boss-input { width: 100%; padding: 0.75rem; background: #222; border: 1px solid #444; color: #fff; margin-bottom: 1rem; border-radius: 0.25rem; font-family: monospace; }
+        .boss-input:focus { border-color: var(--boss-gold); outline: none; }
+        .boss-label { display: block; color: var(--text-dim); margin-bottom: 0.5rem; font-size: 0.8rem; text-transform: uppercase; }
+        .boss-btn { background: var(--boss-gold); color: #000; font-weight: bold; width: 100%; padding: 1rem; text-transform: uppercase; letter-spacing: 1px; border: none; cursor: pointer; transition: all 0.3s; }
+        .boss-btn:hover { background: #fff; }
+        .boss-btn:disabled { background: #555; cursor: not-allowed; }
+        .boss-status { font-family: monospace; color: var(--success); margin-top: 1rem; min-height: 1.5rem; }
+
         .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
         
         .card { background: var(--card-bg); border-radius: 1rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #334155; }
@@ -420,6 +541,7 @@ app.get('/', (req, res) => {
           <div class="tab" onclick="showSection('processes')"><i class="fas fa-list"></i> Processes</div>
           <div class="tab" onclick="showSection('services')"><i class="fas fa-cogs"></i> Services</div>
           <div class="tab" onclick="showSection('logs')"><i class="fas fa-file-alt"></i> Logs</div>
+          <div class="tab" onclick="showSection('backups')" style="color: var(--boss-gold)"><i class="fas fa-shield-alt"></i> Backups</div>
           <div class="tab" onclick="showSection('api-doc')"><i class="fas fa-book"></i> API</div>
         </div>
 
@@ -472,6 +594,89 @@ app.get('/', (req, res) => {
           <pre id="log-output">Fetching logs...</pre>
         </div>
 
+        <div id="backups" class="section">
+          <div class="boss-panel">
+            <div class="boss-header">
+              <h2 class="boss-title"><i class="fas fa-crown"></i> System Backup Manager</h2>
+              <div class="badge" style="background: var(--boss-gold); color: #000">Authorized Access Only</div>
+            </div>
+            
+            <div class="boss-grid">
+              <!-- Client Backup -->
+              <div class="boss-card">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.5rem">
+                  <h3 style="color:white; text-transform:uppercase">Inner Client System</h3>
+                  <div id="client-size-badge" class="badge" style="background:#333; color:var(--boss-gold)">Size: --</div>
+                </div>
+                
+                <div class="boss-label">Source Path</div>
+                <input type="text" id="backup-client-path" class="boss-input" value="." placeholder="/path/to/app">
+                
+                <div class="boss-label">Exclude Patterns</div>
+                <input type="text" id="backup-client-excludes" class="boss-input" placeholder="node_modules, .git">
+                
+                <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem">
+                  <input type="checkbox" id="backup-client-email-toggle" onchange="document.getElementById('backup-client-email').style.display = this.checked ? 'block' : 'none'">
+                  <label for="backup-client-email-toggle" class="boss-label" style="margin-bottom:0">Email Result</label>
+                </div>
+                <input type="email" id="backup-client-email" class="boss-input" style="display:none" placeholder="boss@example.com">
+                
+                <button onclick="runBackup('client')" id="btn-backup-client" class="boss-btn"><i class="fas fa-save"></i> Initiate Backup</button>
+                <div id="status-client" class="boss-status">Status: Ready</div>
+                
+                <div style="margin-top:1.5rem; border-top:1px solid #333; padding-top:1rem;">
+                  <div class="boss-label" style="display:flex; justify-content:space-between; align-items:center;">
+                    Existing Backups
+                    <i class="fas fa-sync" style="cursor:pointer" onclick="loadBackups()"></i>
+                  </div>
+                  <div id="backup-list" style="max-height:100px; overflow-y:auto; font-size:0.75rem;">
+                    <div style="color:#666; font-style:italic">Click sync to load records...</div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Database Backup -->
+              <div class="boss-card">
+                <h3 style="color:white; margin-bottom:1.5rem; text-transform:uppercase">Database Vault</h3>
+                
+                <div class="boss-label">Database Type</div>
+                <select id="backup-db-type" class="boss-input">
+                  <option value="mysql">MySQL / MariaDB</option>
+                  <option value="postgres">PostgreSQL</option>
+                </select>
+
+                <div class="boss-label">Host</div>
+                <input type="text" id="backup-db-host" class="boss-input" value="localhost">
+
+                <div class="boss-label">Database Name</div>
+                <input type="text" id="backup-db-name" class="boss-input" placeholder="db_name">
+
+                <div class="boss-label">User</div>
+                <input type="text" id="backup-db-user" class="boss-input" placeholder="root">
+
+                <div class="boss-label">Password</div>
+                <input type="password" id="backup-db-pass" class="boss-input" placeholder="••••••••">
+
+                <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:1rem">
+                  <input type="checkbox" id="backup-db-email-toggle" onchange="document.getElementById('backup-db-email').style.display = this.checked ? 'block' : 'none'">
+                  <label for="backup-db-email-toggle" class="boss-label" style="margin-bottom:0">Email Result</label>
+                </div>
+                <input type="email" id="backup-db-email" class="boss-input" style="display:none" placeholder="boss@example.com">
+                
+                <button onclick="runBackup('db')" id="btn-backup-db" class="boss-btn"><i class="fas fa-database"></i> Dump Database</button>
+                <div id="status-db" class="boss-status">Status: Ready</div>
+              </div>
+            </div>
+
+            <div style="margin-top: 2rem;">
+               <h3 style="color:white; margin-bottom:1rem; font-size:0.9rem; text-transform:uppercase">Backup History</h3>
+               <div id="backup-console" style="background:black; padding:1rem; border:1px solid #333; color:#0f0; font-family:monospace; height:150px; overflow-y:auto; font-size:0.8rem;">
+                  > System initialized...
+               </div>
+            </div>
+          </div>
+        </div>
+
         <div id="api-doc" class="card section">
           <div class="card-header"><h2>API Documentation</h2></div>
           <p style="color: var(--text-dim); margin-bottom: 1rem;">Click on any endpoint to view the raw JSON data in a new tab.</p>
@@ -512,8 +717,9 @@ app.get('/', (req, res) => {
         function showSection(id) {
           document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
           document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-          document.getElementById(id).classList.add('active');
-          event.currentTarget.classList.add('active');
+          const target = document.getElementById(id);
+          if (target) target.classList.add('active');
+          if (event && event.currentTarget) event.currentTarget.classList.add('active');
         }
 
         async function fetchMetrics() {
@@ -637,6 +843,11 @@ app.get('/', (req, res) => {
 
           // Logs
           document.getElementById('log-output').innerText = data.logs;
+          
+          // Client Size
+          if (data.client_size) {
+            document.getElementById('client-size-badge').innerText = 'Size: ' + data.client_size;
+          }
         }
 
         async function viewLogs(name) {
@@ -653,9 +864,9 @@ app.get('/', (req, res) => {
           const res = await fetch('/api/metrics/docker/' + name + '/top');
           const data = await res.json();
           
-          let table = 'PID\tUSER\tCPU\tMEM\tCOMMAND\\n' + '-'.repeat(60) + '\\n';
+          let table = 'PID\\tUSER\\tCPU\\tMEM\\tCOMMAND\\n' + '-'.repeat(60) + '\\n';
           data.processes.forEach(p => {
-            table += \`\${p.pid}\t\${p.user}\t\${p.cpu}\t\${p.mem}\t\${p.command}\\n\`;
+            table += \`\${p.pid}\\t\${p.user}\\t\${p.cpu}\\t\${p.mem}\\t\${p.command}\\n\`;
           });
           document.getElementById('modal-body').innerText = table;
         }
@@ -669,14 +880,114 @@ app.get('/', (req, res) => {
           document.getElementById('modal').style.display = 'none';
         }
 
+        async function runBackup(type) {
+          const btn = document.getElementById('btn-backup-' + type);
+          const status = document.getElementById('status-' + type);
+          
+          let settings = {};
+          if (type === 'client') {
+            settings.path = document.getElementById('backup-client-path').value;
+            settings.excludes = document.getElementById('backup-client-excludes').value;
+            if (document.getElementById('backup-client-email-toggle').checked) {
+              settings.email = document.getElementById('backup-client-email').value;
+              if (!settings.email) return alert('Enter email address');
+            }
+          } else if (type === 'db') {
+            settings.type = document.getElementById('backup-db-type').value;
+            settings.host = document.getElementById('backup-db-host').value;
+            settings.name = document.getElementById('backup-db-name').value;
+            settings.user = document.getElementById('backup-db-user').value;
+            settings.password = document.getElementById('backup-db-pass').value;
+            if (document.getElementById('backup-db-email-toggle').checked) {
+              settings.email = document.getElementById('backup-db-email').value;
+              if (!settings.email) return alert('Enter email address');
+            }
+            
+            if (!settings.name || !settings.user) {
+              alert('Please fill in database details');
+              return;
+            }
+          }
+
+          // UI Update
+          btn.disabled = true;
+          btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Processing...';
+          status.innerText = 'Status: BACKUP IN PROGRESS...';
+          status.style.color = 'var(--warning)';
+          logToConsole(\`[\${type.toUpperCase()}] Starting backup job...\`);
+
+          try {
+             const res = await fetch('/api/backup/run', {
+               method: 'POST',
+               headers: {'Content-Type': 'application/json'},
+               body: JSON.stringify({ type, settings })
+             });
+             const data = await res.json();
+             
+             if (data.success) {
+               status.innerText = 'Status: COMPLETED';
+               status.style.color = 'var(--success)';
+               let msg = \`[\${type.toUpperCase()}] SUCCESS: \${data.message} (\${data.file})\`;
+               if (data.emailStatus) msg += \` | Email: \${data.emailStatus}\`;
+               logToConsole(msg);
+             } else {
+               status.innerText = 'Status: FAILED';
+               status.style.color = 'var(--danger)';
+               logToConsole(\`[\${type.toUpperCase()}] ERROR: \${data.error}\`);
+             }
+          } catch (err) {
+             console.error(err);
+             status.innerText = 'Status: NETWORK ERROR';
+             status.style.color = 'var(--danger)';
+             logToConsole(\`[\${type.toUpperCase()}] NETWORK ERROR: \${err.message}\`);
+          } finally {
+             btn.disabled = false;
+             btn.innerHTML = type === 'client' ? '<i class="fas fa-save"></i> Initiate Backup' : '<i class="fas fa-database"></i> Dump Database';
+          }
+        }
+
+        function logToConsole(msg) {
+           const c = document.getElementById('backup-console');
+           const time = new Date().toLocaleTimeString();
+           c.innerHTML += \`<div><span style="color:#666">[\${time}]</span> \${msg}</div>\`;
+           c.scrollTop = c.scrollHeight;
+        }
+
+        async function loadBackups() {
+           const list = document.getElementById('backup-list');
+           list.innerHTML = '<div style="color:var(--boss-gold)"><i class="fas fa-spinner fa-spin"></i> Loading...</div>';
+           
+           try {
+             const res = await fetch('/api/backup/list');
+             const data = await res.json();
+             
+             if (data.success && data.backups.length > 0) {
+               list.innerHTML = data.backups.map(b => \`
+                 <div style="padding: 5px; border-bottom: 1px solid #222; display: flex; justify-content: space-between; align-items: center;">
+                    <span title="\${b.path}" style="color:\${b.type === 'database' ? 'var(--boss-gold)' : 'var(--text)'}">
+                       \${b.name.length > 25 ? b.name.substring(0,25)+'...' : b.name}
+                    </span>
+                    <i class="fas fa-download" style="color:#666; cursor:not-allowed"></i>
+                 </div>
+               \`).join('');
+             } else {
+               list.innerHTML = '<div style="color:#666">No backups found in /tmp</div>';
+             }
+           } catch (err) {
+             list.innerHTML = '<div style="color:var(--danger)">Failed to load</div>';
+           }
+        }
+
         // Auto Refresh
         setInterval(fetchMetrics, ${config.api.refreshInterval});
         fetchMetrics();
+        loadBackups();
       </script>
     </body>
     </html>
   `);
 });
+
 
 // Start server
 const PORT = config.api.port;

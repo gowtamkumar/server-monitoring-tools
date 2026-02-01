@@ -28,4 +28,16 @@ module.exports = {
     topProcessCount: parseInt(process.env.TOP_PROCESS_COUNT || "10"),
     containerLogLines: parseInt(process.env.CONTAINER_LOG_LINES || "50"),
   },
+
+  // Email/SMTP settings
+  mail: {
+    host: process.env.SMTP_HOST || "",
+    port: parseInt(process.env.SMTP_PORT || "587"),
+    secure: process.env.SMTP_SECURE === "true", // true for 465, false for other ports
+    auth: {
+      user: process.env.SMTP_USER || "",
+      pass: process.env.SMTP_PASS || "",
+    },
+    from: process.env.SMTP_FROM || '"VPS Monitor" <alerts@example.com>',
+  },
 };

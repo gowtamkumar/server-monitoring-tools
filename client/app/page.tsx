@@ -1,5 +1,6 @@
 "use client";
 
+import { BackupsSection } from '@/components/backups-section';
 import { DockerTable } from '@/components/docker-table';
 import { Header } from '@/components/header';
 import { LogsViewer } from '@/components/logs-viewer';
@@ -8,7 +9,7 @@ import { ProcessTable } from '@/components/process-table';
 import { ServicesGrid } from '@/components/services-grid';
 import { fetchDockerLogs, fetchDockerProcesses, fetchMetrics } from '@/lib/api';
 import { clsx } from 'clsx';
-import { Box, Cpu, FileText, HardDrive, List, MemoryStick, Network, Settings } from 'lucide-react';
+import { Box, Cpu, FileText, HardDrive, List, MemoryStick, Network, Settings, ShieldCheck } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { twMerge } from 'tailwind-merge';
 
@@ -20,7 +21,7 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 export default function Home() {
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'docker' | 'processes' | 'services' | 'logs'>('docker');
+  const [activeTab, setActiveTab] = useState<'docker' | 'processes' | 'services' | 'logs' | 'backups'>('docker');
   const [modalOpen, setModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState<{ title: string; body: string }>({ title: '', body: '' });
 
@@ -138,19 +139,25 @@ export default function Home() {
             { id: 'processes', label: 'Processes', icon: List },
             { id: 'services', label: 'Services', icon: Settings },
             { id: 'logs', label: 'Logs', icon: FileText },
+            { id: 'backups', label: 'Backups', icon: ShieldCheck },
           ].map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
               className={cn(
                 "pb-4 flex items-center gap-2 text-sm font-medium transition-all relative",
-                activeTab === tab.id ? "text-indigo-400" : "text-slate-400 hover:text-slate-200"
+                activeTab === tab.id
+                  ? (tab.id === 'backups' ? "text-amber-400" : "text-indigo-400")
+                  : "text-slate-400 hover:text-slate-200"
               )}
             >
               <tab.icon className="w-4 h-4" />
               {tab.label}
               {activeTab === tab.id && (
-                <span className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-400 rounded-t-full"></span>
+                <span className={cn(
+                  "absolute bottom-0 left-0 w-full h-0.5 rounded-t-full",
+                  tab.id === 'backups' ? "bg-amber-400" : "bg-indigo-400"
+                )}></span>
               )}
             </button>
           ))}
@@ -181,6 +188,10 @@ export default function Home() {
 
           {activeTab === 'logs' && (
             <LogsViewer logs={m.logs} onClear={() => { }} />
+          )}
+
+          {activeTab === 'backups' && (
+            <BackupsSection />
           )}
         </div>
       </div>
