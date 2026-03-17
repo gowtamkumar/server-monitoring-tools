@@ -1,15 +1,17 @@
 "use client";
 
 import { BackupsSection } from '@/components/backups-section';
+import { BandwidthChart } from '@/components/bandwidth-chart';
 import { DockerTable } from '@/components/docker-table';
 import { Header } from '@/components/header';
+import { HistoryChart } from '@/components/history-chart';
 import { LogsViewer } from '@/components/logs-viewer';
 import { MetricCard } from '@/components/metric-card';
 import { ProcessTable } from '@/components/process-table';
 import { ServicesGrid } from '@/components/services-grid';
 import { fetchDockerLogs, fetchDockerProcesses, fetchMetrics } from '@/lib/api';
 import { clsx } from 'clsx';
-import { Box, Cpu, FileText, HardDrive, List, MemoryStick, Network, Settings, ShieldCheck } from 'lucide-react';
+import { BarChart2, Box, Cpu, FileText, HardDrive, List, MemoryStick, Network, Settings, ShieldCheck, Wifi } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { twMerge } from 'tailwind-merge';
 
@@ -21,7 +23,7 @@ function cn(...inputs: (string | undefined | null | false)[]) {
 export default function Home() {
   const [metrics, setMetrics] = useState<any>(null);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<'docker' | 'processes' | 'services' | 'logs' | 'backups'>('docker');
+  const [activeTab, setActiveTab] = useState<'docker' | 'processes' | 'services' | 'logs' | 'backups' | 'history' | 'bandwidth'>('docker');
   const [modalOpen, setModalOpen] = useState(false);
   const [modalContent, setModalContent] = useState<{ title: string; body: string }>({ title: '', body: '' });
 
@@ -85,7 +87,11 @@ export default function Home() {
   return (
     <div className="min-h-screen bg-[#0f172a] text-slate-200 font-sans selection:bg-indigo-500/30">
       <div className="max-w-7xl mx-auto p-6 md:p-8">
-        <Header lastSync={m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : 'N/A'} />
+        <Header
+          lastSync={m.timestamp ? new Date(m.timestamp).toLocaleTimeString() : 'N/A'}
+          mode={m.server_mode}
+          host={m.server_host}
+        />
 
         {/* Metrics Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
@@ -140,6 +146,8 @@ export default function Home() {
             { id: 'services', label: 'Services', icon: Settings },
             { id: 'logs', label: 'Logs', icon: FileText },
             { id: 'backups', label: 'Backups', icon: ShieldCheck },
+            { id: 'history', label: '15-Day History', icon: BarChart2 },
+            { id: 'bandwidth', label: 'Bandwidth', icon: Wifi },
           ].map((tab) => (
             <button
               key={tab.id}
@@ -192,6 +200,14 @@ export default function Home() {
 
           {activeTab === 'backups' && (
             <BackupsSection />
+          )}
+
+          {activeTab === 'history' && (
+            <HistoryChart />
+          )}
+
+          {activeTab === 'bandwidth' && (
+            <BandwidthChart />
           )}
         </div>
       </div>

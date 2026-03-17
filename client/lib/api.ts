@@ -1,5 +1,17 @@
 export const API_BASE_URL = 'http://localhost:4000/api';
 
+export async function fetchMonthlyBandwidth() {
+  const res = await fetch(`${API_BASE_URL}/metrics/bandwidth/monthly`);
+  if (!res.ok) throw new Error('Failed to fetch bandwidth data');
+  return res.json();
+}
+
+export async function fetchHistory(days: number = 15) {
+  const res = await fetch(`${API_BASE_URL}/metrics/history?days=${days}`);
+  if (!res.ok) throw new Error('Failed to fetch history');
+  return res.json();
+}
+
 export async function fetchMetrics() {
   const res = await fetch(`${API_BASE_URL}/metrics`);
   if (!res.ok) throw new Error('Failed to fetch metrics');
